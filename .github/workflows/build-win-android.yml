@@ -69,15 +69,17 @@ jobs:
       - name: Patch auto_orientation_v2 gradle script
         run: |
           set -euo pipefail
-          PATCHED=0
-          while IFS= read -r f; do
+          for f in "$HOME"/.pub-cache/hosted/pub.dev/auto_orientation_v2-*/android/build.gradle; do
+            [ -e "$f" ] || continue
+            echo "== patching $f"
+            # 1) 2.4.7 declares a kotlin { } block but never applies the Kotlin plugin
             if grep -qE "^[[:space:]]*kotlin[[:space:]]*\{" "$f" && ! grep -q "org.jetbrains.kotlin.android" "$f"; then
-              echo "patching $f"
               sed -i "s|^apply plugin: 'com.android.library'|apply plugin: 'com.android.library'\napply plugin: 'org.jetbrains.kotlin.android'|" "$f"
-              PATCHED=1
             fi
-          done < <(ls -1 "$HOME"/.pub-cache/hosted/pub.dev/auto_orientation_v2-*/android/build.gradle 2>/dev/null || true)
-          echo "patched=$PATCHED"
+            # 2) with Kotlin 2.x, jvmTarget is a JvmTarget enum and rejects a String
+            sed -i 's|jvmTarget = "JVM_17"|jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)|g; s|jvmTarget = "17"|jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)|g' "$f"
+            grep -n -E "apply plugin|jvmTarget" "$f"
+          done
 
       - name: Build APK (split per ABI)
         working-directory: simple_live_app
