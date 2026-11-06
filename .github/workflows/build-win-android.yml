@@ -1,0 +1,143 @@
+name: Build Windows + Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter_version:
+        description: "Flutter version (keep 3.38.3 unless upstream asks otherwise)"
+        required: false
+        default: "3.38.3"
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - ".github/workflows/build-win-android.yml"
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # Android: release APK, signed with a keystore generated inside CI
+  # ------------------------------------------------------------------
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter_version || '3.38.3' }}
+          channel: stable
+          cache: true
+
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses || true
+
+      - name: Generate keystore and key.properties
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$GITHUB_WORKSPACE/release.jks" \
+            -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias simplelive \
+            -storepass simplelive123 -keypass simplelive123 \
+            -dname "CN=Simple Live, OU=Build, O=Build, L=NA, ST=NA, C=CN"
+          cat > simple_live_app/android/key.properties <<EOF
+          storeFile=$GITHUB_WORKSPACE/release.jks
+          storePassword=simplelive123
+          keyPassword=simplelive123
+          keyAlias=simplelive
+          EOF
+
+      - name: Flutter pub get
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: Build APK (split per ABI)
+        working-directory: simple_live_app
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload split APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          if-no-files-found: error
+          path: simple_live_app/build/app/outputs/flutter-apk/app-*-release.apk
+
+      # Universal APK = single file that installs on any phone (larger).
+      - name: Build universal APK
+        working-directory: simple_live_app
+        run: |
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             simple_live_universal-release.apk
+
+      - name: Upload universal APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-universal
+          if-no-files-found: error
+          path: simple_live_app/simple_live_universal-release.apk
+
+  # ------------------------------------------------------------------
+  # Windows: release desktop build, zipped with all DLLs / data files
+  # ------------------------------------------------------------------
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter_version || '3.38.3' }}
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Flutter pub get
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: Build Windows release
+        working-directory: simple_live_app
+        run: flutter build windows --release
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: |
+          V=$(grep '^version:' simple_live_app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Zip release bundle
+        shell: pwsh
+        working-directory: simple_live_app
+        run: |
+          $src = "build\windows\x64\runner\Release"
+          if (-not (Test-Path $src)) { throw "Release folder not found: $src" }
+          $out = "simple_live_windows_x64_${{ steps.ver.outputs.version }}.zip"
+          Compress-Archive -Path "$src\*" -DestinationPath $out -CompressionLevel Optimal
+          Get-Item $out | Format-List Name,Length
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          if-no-files-found: error
+          path: simple_live_app/simple_live_windows_x64_*.zip
