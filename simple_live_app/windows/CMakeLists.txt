@@ -2,6 +2,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(simple_live_app LANGUAGES CXX)
 
+# Some plugins (flutter_inappwebview_windows) still include the deprecated
+# <experimental/coroutine> header. MSVC 14.5x (Visual Studio 18) turns that into
+# a hard error, so silence the deprecation to keep the Windows build working.
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "simple_live_app")
