@@ -64,6 +64,21 @@ jobs:
         working-directory: simple_live_app
         run: flutter pub get
 
+      # auto_orientation_v2 2.4.7 ships a `kotlin { }` block but never applies the
+      # Kotlin Gradle plugin, so Gradle aborts with "Could not find method kotlin()".
+      - name: Patch auto_orientation_v2 gradle script
+        run: |
+          set -euo pipefail
+          PATCHED=0
+          while IFS= read -r f; do
+            if grep -qE "^[[:space:]]*kotlin[[:space:]]*\{" "$f" && ! grep -q "org.jetbrains.kotlin.android" "$f"; then
+              echo "patching $f"
+              sed -i "s|^apply plugin: 'com.android.library'|apply plugin: 'com.android.library'\napply plugin: 'org.jetbrains.kotlin.android'|" "$f"
+              PATCHED=1
+            fi
+          done < <(ls -1 "$HOME"/.pub-cache/hosted/pub.dev/auto_orientation_v2-*/android/build.gradle 2>/dev/null || true)
+          echo "patched=$PATCHED"
+
       - name: Build APK (split per ABI)
         working-directory: simple_live_app
         run: flutter build apk --release --split-per-abi
@@ -116,6 +131,10 @@ jobs:
 
       - name: Build Windows release
         working-directory: simple_live_app
+        env:
+          # Belt and braces alongside the CMake definition: MSVC 14.5x treats
+          # <experimental/coroutine> as a hard error unless this is defined.
+          CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: flutter build windows --release
 
       - name: Read version
