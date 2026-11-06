@@ -64,22 +64,10 @@ jobs:
         working-directory: simple_live_app
         run: flutter pub get
 
-      # auto_orientation_v2 2.4.7 ships a `kotlin { }` block but never applies the
-      # Kotlin Gradle plugin, so Gradle aborts with "Could not find method kotlin()".
-      - name: Patch auto_orientation_v2 gradle script
-        run: |
-          set -euo pipefail
-          for f in "$HOME"/.pub-cache/hosted/pub.dev/auto_orientation_v2-*/android/build.gradle; do
-            [ -e "$f" ] || continue
-            echo "== patching $f"
-            # 1) 2.4.7 declares a kotlin { } block but never applies the Kotlin plugin
-            if grep -qE "^[[:space:]]*kotlin[[:space:]]*\{" "$f" && ! grep -q "org.jetbrains.kotlin.android" "$f"; then
-              sed -i "s|^apply plugin: 'com.android.library'|apply plugin: 'com.android.library'\napply plugin: 'org.jetbrains.kotlin.android'|" "$f"
-            fi
-            # 2) with Kotlin 2.x, jvmTarget is a JvmTarget enum and rejects a String
-            sed -i 's|jvmTarget = "JVM_17"|jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)|g; s|jvmTarget = "17"|jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)|g' "$f"
-            grep -n -E "apply plugin|jvmTarget" "$f"
-          done
+      # Several 2026-era plugin releases reference a `kotlin { }` block without
+      # applying the Kotlin Gradle plugin, which breaks Gradle evaluation.
+      - name: Patch Android plugin gradle scripts
+        run: bash scripts/ci-patch-plugins.sh
 
       - name: Build APK (split per ABI)
         working-directory: simple_live_app
